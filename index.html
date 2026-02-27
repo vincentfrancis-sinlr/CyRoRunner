@@ -81,6 +81,8 @@
 
     const jumpSound = new Audio("clicking.mp3");
     const collisionSound = new Audio("collision.mp3");
+    jumpSound.volume = 0.75;
+    collisionSound.volume = 0.75;
 
     let gameSpeed = 5;
     let gravity = 0.8;
@@ -113,9 +115,6 @@
         document.body.classList.toggle("dark-mode");
         mainColor = darkMode ? "white" : "black";
         bgColor = darkMode ? "black" : "white";
-        document.body.style.backgroundColor = bgColor;
-        document.body.style.color = mainColor;
-        canvas.style.backgroundColor = bgColor;
     });
 
     class FloatingText {
@@ -312,11 +311,9 @@
         shakeTime = 12;
         impactX = dino.x + (dino.width / 2);
         if (navigator.vibrate) navigator.vibrate([100, 50, 200]);
-        
         jumpSound.pause();
         jumpSound.currentTime = 0;
         collisionSound.play().catch(e => {});
-
         particles = [];
         for (let i = 0; i < 1000; i++) {
             deathPieces.push(new DeathPiece(impactX, dino.y - (dino.height / 2)));
@@ -468,25 +465,18 @@
     }
 
     function handleInput(e) {
+        // AUDIO HANDSHAKE: Capture the very first tap/click to play sound
+        if (!gameStarted || (gameOver && Date.now() - deathTime > 500)) {
+            jumpSound.currentTime = 0;
+            jumpSound.play().catch(err => console.log("Unlock required"));
+        }
+
         if (e && (e.type === "touchstart" || e.type === "mousedown")) {
             if (e.target.id === "themeToggle" || e.target.closest("#themeToggle") || e.target.closest(".theme-control")) return;
             if (e.type === "touchstart") e.preventDefault();
         }
-
-        // Trigger wake-up audio only on START or RESTART clicks
         if (!gameStarted || (gameOver && Date.now() - deathTime > 500)) {
-            jumpSound.currentTime = 0;
-            jumpSound.play().catch(err => {});
-        }
-
-        if (!gameStarted) {
             resetGame();
-            return;
-        }
-        if (gameOver) {
-            if (Date.now() - deathTime > 500) {
-                resetGame();
-            }
             return;
         }
         dino.jump();
