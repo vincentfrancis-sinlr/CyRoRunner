@@ -372,12 +372,7 @@
                 deathPieces.forEach(p => {
                     if (p.isDead) {
                         let relativeX = p.x - impactX;
-                        
-                        // NEW LOGIC: Reduce fade intensity by allowing flame for left-side debris
-                        // Now using distance from impact for probability, regardless of side
                         let dist = Math.abs(relativeX);
-                        
-                        // Increased probability and wider decay area for reduced fade intensity
                         let intensityScale = Math.max(0, 1 - (dist / 900)); 
                         if (Math.random() < (0.06 * intensityScale)) { 
                             fireParticles.push(new FireParticle(p.x, p.y, false, intensityScale));
