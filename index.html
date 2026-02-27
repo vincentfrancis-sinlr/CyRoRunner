@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CyRo Runner</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            transition: background-color 0.3s ease, color 0.3s ease;
+            font-family: monospace;
+            overflow: hidden;
+            background-color: white;
+        }
+
+        .game-wrapper {
+            position: relative;
+            width: 100vw;
+            max-width: 900px;
+            aspect-ratio: 900 / 500;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .theme-control {
+            position: absolute;
+            top: 10.5%;
+            right: 2.2%;
+            cursor: pointer;
+            z-index: 10;
+            transition: transform 0.05s linear;
+            width: 8.5%;
+        }
+
+        #themeToggle {
+            width: 100%;
+            aspect-ratio: 2.2 / 1;
+            background: black;
+            border: 0.2vw solid black;
+            border-radius: 5vw;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.3s;
+            padding: 0;
+            display: flex;
+            align-items: center;
+        }
+
+        #themeToggle .circle {
+            width: 40%;
+            height: 85%;
+            background: white;
+            border-radius: 50%;
+            position: absolute;
+            left: 5%;
+            transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        #themeToggle.active {
+            background: white;
+            border-color: white;
+        }
+
+        #themeToggle.active .circle {
+            left: 55%;
+            background: black;
+        }
+
+        body.dark-mode {
+            background-color: black;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+<div class="game-wrapper">
+    <div class="theme-control" id="toggleContainer">
+        <button id="themeToggle" aria-label="Toggle Theme">
+            <div class="circle"></div>
+        </button>
+    </div>
+    <canvas id="game"></canvas>
+</div>
+
+<script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const toggleContainer = document.getElementById("toggleContainer");
+
+    const WIDTH = 900;
+    const HEIGHT = 500;
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+    const groundY = 400;
+
+    const jumpSound = new Audio("clicking.mp3");
+    const collisionSound = new Audio("collision.mp3");
+
+    let gameSpeed = 5;
+    let gravity = 0.8;
+    let score = 0;
+    let highScore = localStorage.getItem("cyroHighScore") || 0;
+    let gameOver = false;
+    let gameStarted = false;
+    let spawnTimer = 0;
+    let darkMode = false;
+    let nextSpawnDistance = 600;
+    let deathTime = 0;
+    let impactX = 0;
+    let particles = [];
+    let deathPieces = [];
+    let fireParticles = [];
+    let floatingTexts = [];
+    let shakeTime = 0;
+
+    let lastRank = "Beginner";
+    let isBlinking = false;
+    let blinkTimer = 0;
+
+    let mainColor = "black";
+    let bgColor = "white";
+
+    const toggleBtn = document.getElementById("themeToggle");
+
+    toggleBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        darkMode = !darkMode;
+        toggleBtn.classList.toggle("active");
+        document.body.classList.toggle("dark-mode");
+        mainColor = darkMode ? "white" : "black";
+        bgColor = darkMode ? "black" : "white";
+        document.body.style.backgroundColor = bgColor;
+        document.body.style.color = mainColor;
+        canvas.style.backgroundColor = bgColor;
+    });
+
+    class FloatingText {
+        constructor(x, y, text) {
+            this.x = x; this.y = y; this.text = text;
+            this.opacity = 1; this.speedY = -1.5;
+        }
+        update() { this.y += this.speedY; this.opacity -= 0.015; }
+        draw(color) {
+            ctx.save();
+            ctx.globalAlpha = Math.max(0, this.opacity);
+            ctx.fillStyle = color;
+            ctx.font = "bold 22px monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(this.text, this.x, this.y);
+            ctx.restore();
+        }
+    }
+
+    class FireParticle {
+        constructor(x, y, isSmoke = false, scale = 1) {
+            this.x = x; this.y = y;
+            this.isSmoke = isSmoke;
+            this.size = (this.isSmoke ? Math.random() * 8 + 3 : Math.random() * 5 + 2) * scale;
+            this.speedX = (Math.random() - 0.5) * 1.2;
+            this.speedY = this.isSmoke ? -(Math.random() * 1.5 + 0.5) : -(Math.random() * 2.5 + 1);
+            this.opacity = scale;
+            if (this.isSmoke) {
+                this.color = darkMode ? "rgba(150,150,150,0.8)" : "rgba(80,80,80,0.8)";
+            } else {
+                const r = Math.random();
+                this.color = r > 0.6 ? "#FF4500" : (r > 0.3 ? "#FF8C00" : "#FFD700");
+            }
+        }
+        update() {
+            this.x += this.speedX; this.y += this.speedY;
+            this.opacity -= this.isSmoke ? 0.012 : 0.03;
+            this.size *= this.isSmoke ? 1.01 : 0.96;
+        }
+        draw() {
+            if (this.opacity <= 0) return;
+            ctx.save();
+            ctx.globalAlpha = Math.max(0, this.opacity);
+            ctx.fillStyle = this.color;
+            ctx.fillRect(this.x, this.y, this.size, this.size);
+            ctx.restore();
+        }
+    }
+
+    class DeathPiece {
+        constructor(x, y) {
+            this.x = x; this.y = y;
+            this.size = Math.random() * 3 + 1;
+            this.speedX = (Math.random() - 0.5) * 24;
+            this.speedY = (Math.random() - 0.9) * 20;
+            this.gravity = 0.7; this.bounce = -0.4; this.friction = 0.8;
+            this.opacity = 1; this.isDead = false;
+        }
+        update(obsList) {
+            if (!this.isDead) {
+                this.x += this.speedX; this.y += this.speedY;
+                this.speedY += this.gravity;
+                if (this.y + this.size > groundY) {
+                    this.y = groundY - this.size;
+                    this.speedY *= this.bounce;
+                    this.speedX *= this.friction;
+                    if (Math.abs(this.speedY) < 1.5) { this.speedY = 0; this.speedX *= 0.5; }
+                }
+                obsList.forEach(obs => {
+                    if (this.x < obs.x + obs.width && this.x + this.size > obs.x &&
+                        this.y < obs.y && this.y + this.size > obs.y - obs.height) {
+                        this.speedX *= -0.8; this.speedY *= -0.5; this.x += this.speedX;
+                    }
+                });
+                if (Math.abs(this.speedY) < 0.1 && Math.abs(this.speedX) < 0.1) this.isDead = true;
+            }
+            this.opacity -= 0.003;
+        }
+        draw(color) {
+            ctx.save();
+            ctx.globalAlpha = Math.max(0.3, this.opacity);
+            ctx.fillStyle = color;
+            ctx.fillRect(this.x, this.y, this.size, this.size);
+            ctx.restore();
+        }
+    }
+
+    class PixelDust {
+        constructor(x, y) {
+            this.x = x; this.y = y; this.size = 6;
+            this.speedX = - (gameSpeed + Math.random() * 3);
+            this.speedY = (Math.random() - 0.5) * 1.5; this.opacity = 1;
+        }
+        update() { this.x += this.speedX; this.y += this.speedY; this.opacity -= 0.04; }
+        draw(color) {
+            ctx.save();
+            ctx.globalAlpha = Math.max(0, this.opacity);
+            ctx.fillStyle = color;
+            ctx.fillRect(this.x, this.y, this.size * 2, this.size);
+            ctx.restore();
+        }
+    }
+
+    class Dino {
+        constructor() {
+            this.x = 80; this.y = groundY; this.width = 100; this.height = 100;
+            this.dy = 0; this.jumpForce = -15;
+            this.grounded = true;
+            this.jumpCount = 0; this.legFrame = 0; this.legTimer = 0;
+        }
+        update() {
+            this.dy += gravity; this.y += this.dy;
+            if (this.y > groundY) { this.y = groundY; this.dy = 0; this.grounded = true; this.jumpCount = 0; }
+            if (this.grounded && gameStarted && !gameOver) {
+                this.legTimer++;
+                if (this.legTimer > 7) { this.legFrame = this.legFrame === 0 ? 1 : 0; this.legTimer = 0; }
+                if (Math.random() < (Math.floor(score/5) > 100 ? 0.1 : 0.02)) { particles.push(new PixelDust(this.x + 10, this.y - 15)); }
+            }
+        }
+        jump() {
+            if (gameOver) return;
+            if (this.grounded || this.jumpCount < 2) {
+                jumpSound.currentTime = 0;
+                jumpSound.play().catch(e => {});
+                this.dy = this.jumpForce; this.grounded = false; this.jumpCount++;
+            }
+        }
+        draw(color) {
+            if (gameOver) return;
+            if (characterImg.complete) {
+                ctx.save();
+                if (darkMode) ctx.filter = "invert(1)";
+                ctx.drawImage(characterImg, this.x, this.y - this.height, this.width, this.height);
+                ctx.restore();
+            }
+            if (this.grounded && gameStarted) {
+                ctx.fillStyle = color;
+                const legY = this.y + 2; const offset = 28; const spread = 5;
+                if (this.legFrame === 0) { ctx.fillRect(this.x + 8 + offset - spread, legY, 8, 6); ctx.fillRect(this.x + 26 + offset + spread, legY, 8, 6); }
+                else { ctx.fillRect(this.x + 12 + offset - spread, legY, 8, 6); ctx.fillRect(this.x + 22 + offset + spread, legY, 8, 6); }
+            }
+        }
+    }
+
+    class Cactus {
+        constructor(spawnX, towerHeight = 1) {
+            this.pSize = 1.25; this.baseUnit = 20 * this.pSize; this.width = 22 * this.pSize;
+            this.towerHeight = towerHeight; this.height = this.baseUnit * this.towerHeight;
+            this.x = spawnX; this.y = groundY; this.passed = false;
+            this.pixels = [[1,1],[2,1],[3,1],[4,1],[5,1],[6,1],[7,1],[14,1],[15,1],[16,1],[17,1],[18,1],[19,1],[20,1],[1,2],[2,2],[3,2],[4,2],[5,2],[6,2],[7,2],[14,2],[15,2],[16,2],[17,2],[18,2],[19,2],[20,2],[1,3],[2,3],[3,3],[4,3],[17,3],[18,3],[19,3],[20,3],[1,4],[2,4],[3,4],[4,4],[5,4],[16,4],[17,4],[18,4],[19,4],[20,4],[1,5],[2,5],[4,5],[5,5],[6,5],[15,5],[16,5],[17,5],[19,5],[20,5],[1,6],[2,6],[5,6],[6,6],[7,6],[14,6],[15,6],[16,6],[19,6],[20,6],[1,7],[2,7],[6,7],[7,7],[8,7],[13,7],[14,7],[15,7],[19,7],[20,7],[7,8],[8,8],[9,8],[10,8],[11,8],[12,8],[13,8],[14,8],[8,9],[10,9],[11,9],[13,9],[8,10],[9,10],[12,10],[13,10],[8,11],[9,11],[12,11],[13,11],[8,12],[10,12],[11,12],[13,12],[7,13],[8,13],[9,13],[10,13],[11,13],[12,13],[13,13],[14,13],[1,14],[2,14],[6,14],[7,14],[8,14],[13,14],[14,14],[15,14],[19,14],[20,14],[1,15],[2,15],[5,15],[6,15],[7,15],[14,15],[15,15],[16,15],[19,15],[20,15],[1,16],[2,16],[4,16],[5,16],[6,16],[15,16],[16,16],[17,16],[19,16],[20,16],[1,17],[2,17],[3,17],[4,17],[5,17],[16,17],[17,17],[18,17],[19,17],[20,17],[1,18],[2,18],[3,18],[4,18],[17,18],[18,18],[19,18],[20,18],[1,19],[2,19],[3,19],[4,19],[5,19],[6,19],[7,19],[14,19],[15,19],[16,19],[17,19],[18,19],[19,19],[20,19],[1,20],[2,20],[3,20],[4,20],[5,20],[6,20],[7,20],[14,20],[15,20],[16,20],[17,20],[18,20],[19,20],[20,20]];
+        }
+        update() { this.x -= gameSpeed; }
+        draw(color) {
+            ctx.fillStyle = color;
+            for (let i = 0; i < this.towerHeight; i++) {
+                let yOffset = i * (this.baseUnit + 1);
+                this.pixels.forEach(([px, py]) => {
+                    ctx.fillRect(this.x + (px * this.pSize), (this.y - this.baseUnit - yOffset) + (py * this.pSize), this.pSize, this.pSize);
+                });
+            }
+        }
+    }
+
+    const characterImg = new Image();
+    characterImg.src = "cynos.svg";
+    let dino = new Dino();
+    let obstacles = [];
+
+    function spawnObstacle() {
+        if (!gameStarted) return;
+        if (spawnTimer < 75) {
+            spawnTimer++;
+            return;
+        }
+        if (obstacles.length === 0 || (WIDTH - obstacles[obstacles.length - 1].x >= nextSpawnDistance)) {
+            let rand = Math.random();
+            let towerH = rand > 0.8 ? 3 : (rand > 0.5 ? 2 : 1);
+            obstacles.push(new Cactus(WIDTH, towerH));
+            nextSpawnDistance = 450 + (Math.random() * 400) + (gameSpeed * 5);
+        }
+    }
+
+    function detectCollision(a, b) {
+        const px = 29;
+        return (a.x + px < b.x + b.width && a.x + a.width - px > b.x && a.y - a.height < b.y && a.y > b.y - b.height);
+    }
+
+    function triggerGameOver() {
+        if (gameOver) return;
+        gameOver = true;
+        deathTime = Date.now();
+        shakeTime = 12;
+        impactX = dino.x + (dino.width / 2);
+        if (navigator.vibrate) navigator.vibrate([100, 50, 200]);
+        jumpSound.pause();
+        jumpSound.currentTime = 0;
+        collisionSound.play().catch(e => {});
+        particles = [];
+        for (let i = 0; i < 1000; i++) {
+            deathPieces.push(new DeathPiece(impactX, dino.y - (dino.height / 2)));
+        }
+        let currentS = Math.floor(score/5);
+        if (currentS > highScore) {
+            highScore = currentS;
+            localStorage.setItem("cyroHighScore", highScore);
+        }
+    }
+
+    function resetGame() {
+        jumpSound.currentTime = 0;
+        jumpSound.play().catch(e => {});
+        gameSpeed = 5;
+        score = 0;
+        obstacles = [];
+        particles = [];
+        dino = new Dino();
+        floatingTexts = [];
+        deathPieces = [];
+        shakeTime = 0;
+        fireParticles = [];
+        impactX = 0;
+        spawnTimer = 0;
+        gameOver = false;
+        gameStarted = true;
+        isBlinking = false;
+        nextSpawnDistance = 600;
+        blinkTimer = 0;
+        toggleContainer.style.transform = "translate(0, 0)";
+    }
+
+    function update() {
+        const currentMainColor = darkMode ? "white" : "black";
+        const currentBgColor = darkMode ? "black" : "white";
+
+        ctx.save();
+        if (shakeTime > 0) {
+            const shakeX = (Math.random() - 0.5) * 15;
+            const shakeY = (Math.random() - 0.5) * 15;
+            ctx.translate(shakeX, shakeY);
+            toggleContainer.style.transform = `translate(${shakeX}px, ${shakeY}px)`;
+            shakeTime--;
+            if (shakeTime === 0) toggleContainer.style.transform = "translate(0, 0)";
+        }
+
+        ctx.fillStyle = currentBgColor;
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        ctx.fillStyle = currentMainColor;
+        ctx.fillRect(0, groundY, WIDTH, 2);
+
+        if (!gameStarted) {
+            ctx.fillStyle = currentMainColor;
+            ctx.textAlign = "center";
+            ctx.font = "bold 40px monospace";
+            ctx.fillText("CyRo Runner", WIDTH / 2, HEIGHT / 2 - 40);
+            ctx.font = "20px monospace";
+            ctx.fillText("TAP TO START", WIDTH / 2, HEIGHT / 2 + 20);
+        } else {
+            let currentS = Math.floor(score / 5);
+            if (!gameOver) {
+                dino.update();
+                spawnObstacle();
+                obstacles.forEach(obs => {
+                    obs.update();
+                    if (!obs.passed && obs.x + obs.width < dino.x) {
+                        obs.passed = true;
+                        if (obs.towerHeight === 3 && (obs.y - obs.height) - dino.y < 40) {
+                            floatingTexts.push(new FloatingText(dino.x + 50, dino.y - 120, "PERFECT!"));
+                        }
+                    }
+                });
+                for (let obs of obstacles) { if (detectCollision(dino, obs)) { triggerGameOver(); break; } }
+                obstacles = obstacles.filter(obs => obs.x + obs.width > 0);
+                particles.forEach((p, i) => { p.update(); if (p.opacity <= 0) particles.splice(i, 1); });
+                score++; if (score % 800 === 0) gameSpeed += 0.3;
+            }
+
+            deathPieces.forEach(p => p.update(obstacles));
+            floatingTexts.forEach((t, i) => { t.update(); if (t.opacity <= 0) floatingTexts.splice(i, 1); });
+
+            if (gameOver) {
+                deathPieces.forEach(p => {
+                    if (p.isDead) {
+                        let dist = Math.abs(p.x - impactX);
+                        let intensityScale = Math.max(0.4, 1 - (dist / 600));
+                        if (Math.random() < (0.04 * intensityScale)) {
+                            fireParticles.push(new FireParticle(p.x, p.y, false, intensityScale));
+                            if (Math.random() < 0.4) fireParticles.push(new FireParticle(p.x, p.y, true, intensityScale));
+                        }
+                    }
+                });
+            }
+
+            fireParticles.forEach((p, i) => { p.update(); if (p.opacity <= 0) fireParticles.splice(i, 1); });
+            particles.forEach(p => p.draw(currentMainColor));
+            dino.draw(currentMainColor);
+            obstacles.forEach(obs => obs.draw(currentMainColor));
+            deathPieces.forEach(p => p.draw(currentMainColor));
+            fireParticles.forEach(p => p.draw());
+            floatingTexts.forEach(t => t.draw(currentMainColor));
+
+            ctx.fillStyle = currentMainColor;
+            ctx.textAlign = "center";
+            ctx.font = "bold 26px monospace";
+            ctx.fillText("CyRo Runner", WIDTH / 2, 40);
+            ctx.textAlign = "right";
+            ctx.font = "16px monospace";
+            ctx.fillText("HI: " + highScore.toString().padStart(5, '0'), WIDTH - 20, 40);
+            ctx.textAlign = "center";
+            ctx.font = "bold 24px monospace";
+            ctx.fillText("SCORE: " + currentS.toString().padStart(5, '0'), WIDTH / 2, groundY + 45);
+
+            let rank = "Beginner";
+            let progress = 0;
+            if (currentS > 1000) { rank = "GET A LIFE BRO"; progress = 1; }
+            else if (currentS > 500) { rank = "Intermediate"; progress = (currentS - 500) / 500; }
+            else { rank = "Beginner"; progress = currentS / 500; }
+
+            if (rank !== lastRank) { isBlinking = true; lastRank = rank; blinkTimer = 0; }
+            let fontSize = 18;
+            if (currentS > 1000) fontSize = 22 + (Math.floor((currentS - 1000) / 20) * 2);
+            ctx.font = "bold " + fontSize + "px monospace";
+
+            let showText = true;
+            if (currentS > 1000) { if (Math.floor(Date.now() / 150) % 2 === 0) showText = false; }
+            else if (isBlinking) {
+                if (Math.floor(Date.now() / 500) % 2 === 0) showText = false;
+                blinkTimer++; if (blinkTimer > 180) { isBlinking = false; blinkTimer = 0; }
+            }
+            if (showText) ctx.fillText(rank, WIDTH / 2, groundY + 75 + (fontSize/4));
+
+            if (currentS <= 1000) {
+                let barW = 120;
+                ctx.strokeStyle = currentMainColor;
+                ctx.strokeRect(WIDTH / 2 - barW/2, groundY + 85, barW, 6);
+                ctx.fillRect(WIDTH / 2 - barW/2, groundY + 85, barW * progress, 6);
+            }
+
+            if (gameOver) {
+                ctx.fillStyle = currentMainColor;
+                ctx.font = "bold 30px monospace";
+                ctx.fillText("GAME OVER", WIDTH / 2, groundY - 150);
+                ctx.font = "20px monospace";
+                ctx.fillText("TAP TO RESTART", WIDTH / 2, groundY - 110);
+            }
+        }
+        ctx.restore();
+        requestAnimationFrame(update);
+    }
+
+    function handleInput(e) {
+        if (e && (e.type === "touchstart" || e.type === "mousedown")) {
+            if (e.target.id === "themeToggle" || e.target.closest("#themeToggle") || e.target.closest(".theme-control")) return;
+            if (e.type === "touchstart") e.preventDefault();
+        }
+        if (!gameStarted) {
+            resetGame();
+            return;
+        }
+        if (gameOver) {
+            if (Date.now() - deathTime > 500) resetGame();
+            return;
+        }
+        dino.jump();
+    }
+
+    window.addEventListener("keydown", (e) => { if (e.code === "Space") { e.preventDefault(); handleInput(e); } });
+    window.addEventListener("mousedown", handleInput);
+    window.addEventListener("touchstart", handleInput, {passive: false});
+    update();
+</script>
+
+</body>
+</html>
