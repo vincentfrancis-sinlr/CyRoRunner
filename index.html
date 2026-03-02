@@ -34,11 +34,13 @@
             position: absolute;
             top: 10.5%;
             right: 2.2%;
-            cursor: pointer;
             z-index: 10;
             transition: transform 0.05s linear;
             width: 8.5%;
             display: none; 
+            flex-direction: column;
+            align-items: center;
+            gap: 1.5vw;
         }
         #themeToggle {
             width: 100%;
@@ -52,6 +54,7 @@
             padding: 0;
             display: flex;
             align-items: center;
+            -webkit-tap-highlight-color: transparent;
         }
         #themeToggle .circle {
             width: 40%;
@@ -64,6 +67,40 @@
         }
         #themeToggle.active { background: white; border-color: white; }
         #themeToggle.active .circle { left: 55%; background: black; }
+
+        #muteToggle {
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 0;
+            width: 50%;
+            aspect-ratio: 1 / 1;
+            color: black;
+            transition: color 0.3s;
+            outline: none;
+            -webkit-tap-highlight-color: transparent;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        body.dark-mode #muteToggle { color: white; }
+        #muteToggle svg {
+            width: 100%;
+            height: 100%;
+            fill: currentColor;
+        }
+
+        @keyframes muteAnimation {
+            0% { transform: scale(1) rotate(0deg); }
+            20% { transform: scale(0.8) rotate(-15deg); }
+            40% { transform: scale(1.15) rotate(10deg); }
+            60% { transform: scale(0.9) rotate(-10deg); }
+            80% { transform: scale(1.05) rotate(5deg); }
+            100% { transform: scale(1) rotate(0deg); }
+        }
+        #muteToggle.animating {
+            animation: muteAnimation 0.3s ease-out;
+        }
     </style>
 </head>
 <body>
@@ -72,6 +109,14 @@
     <div class="theme-control" id="toggleContainer">
         <button id="themeToggle" aria-label="Toggle Theme">
             <div class="circle"></div>
+        </button>
+        <button id="muteToggle" aria-label="Toggle Mute">
+            <svg class="icon-unmuted" viewBox="0 0 24 24">
+                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+            </svg>
+            <svg class="icon-muted" viewBox="0 0 24 24" style="display: none;">
+                <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
+            </svg>
         </button>
     </div>
     <canvas id="game"></canvas>
@@ -89,21 +134,46 @@
     const groundY = 400;
 
     const characterImg = new Image();
-    const jumpSound = new Audio();
-    const collisionSound = new Audio();
-    jumpSound.volume = 0.50;
-    collisionSound.volume = 0.50;
+
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    const masterGain = audioCtx.createGain();
+    masterGain.gain.value = 0.50; 
+    masterGain.connect(audioCtx.destination);
+
+    let jumpBuffer = null;
+    let collisionBuffer = null;
+    let activeJumpSource = null; 
+
+    function playSound(buffer) {
+        if (!buffer || isMuted) return null;
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        
+        const source = audioCtx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(masterGain);
+        source.start(0);
+        return source; 
+    }
+
+    function stopJumpSound() {
+        if (activeJumpSource) {
+            try { activeJumpSource.stop(); } catch(e) {}
+            activeJumpSource = null;
+        }
+    }
 
     let appState = 'loading'; 
     let loadingProgress = 0;
 
-    let gameSpeed = 5;
+    let gameSpeed = 5.5; 
     let gravity = 0.8;
     let score = 0;
     let highScore = localStorage.getItem("cyroHighScore") || 0;
     
     let spawnTimer = 0;
     let darkMode = false;
+    let isMuted = false;
     let nextSpawnDistance = 600;
     let deathTime = 0;
     let impactX = 0;
@@ -117,9 +187,61 @@
     let lastRank = "Beginner";
     let isBlinking = false;
     let blinkTimer = 0;
+
+    let lastWordType = 'none'; 
+    let obstaclesPassedSinceWord = 0;
+    let currentDeathQuote = "";
+    let wordCooldown = 0; 
+
+    class ShuffleBag {
+        constructor(items) {
+            this.master = [...items];
+            this.available = [...items];
+        }
+        get() {
+            if (this.available.length === 0) this.available = [...this.master];
+            const idx = Math.floor(Math.random() * this.available.length);
+            return this.available.splice(idx, 1)[0];
+        }
+    }
+
+    const quirkyBag = new ShuffleBag(["Sick jump!", "Nice hops!", "Majestic AF!", "Perfection.", "Gravity hacked!", "Calculated.", "Smooth.", "Epic.", "Clean.", "Flawless.", "Chef's kiss."]);
+    const teaseBag = new ShuffleBag(["Sweaty!", "Panic!", "Anxiety.", "Close one!", "Yikes.", "Too close!", "Risky!", "Breathe."]);
+    const mockBag = new ShuffleBag(["Spoke too soon.", "Pride -> Fall", "Jinxed it.", "Embarrassing.", "Karma.", "Oof.", "Overconfident?", "Lol.", "Script failed."]);
+    const toldYouSoBag = new ShuffleBag(["Told you so.", "Called it.", "Predictable.", "Saw that coming.", "I literally warned you.", "Right on cue.", "Like clockwork.", "Tragic.", "Point proven."]);
     
-    let consecutiveDoubleJumps = 0;
-    let kangarooOs = 0;
+    const quoteBag = new ShuffleBag([
+        "Dust yourself off.", 
+        "Nobody saw that.", 
+        "Just one more try...", 
+        "You can do better.", 
+        "Don't give up now!", 
+        "Rome wasn't built in a day.", 
+        "Focus up.", 
+        "Blink and you miss it.", 
+        "Try jumping earlier.",
+        "That was just a warmup.",
+        "Aluminium profile: 1, You: 0.",
+        "Let's run that back.",
+        "Again, but better.",
+        "You're getting warmer.",
+        "Skill issue? Prove it wrong.",
+        "Shake it off.",
+        "The next run is the one.",
+        "Don't let the aluminium win.",
+        "Timing is everything.",
+        "Deep breath. Jump.",
+        "Gravity is undefeated. Try again.",
+        "You've got this.",
+        "Almost had it!",
+        "Reflexes need a reboot?",
+        "Patience, grasshopper.",
+        "One more for the road.",
+        "Mistakes are just data.",
+        "Redemption time.",
+        "Don't back down.",
+        "Get back in the zone."
+    ]);
 
     const toggleBtn = document.getElementById("themeToggle");
     toggleBtn.addEventListener("click", (e) => {
@@ -129,28 +251,52 @@
         document.body.classList.toggle("dark-mode");
     });
 
-    async function preloadAssetsReal() {
-        const assets = [
-            { url: 'cynos.svg', obj: characterImg, type: 'image' },
-            { url: 'clicking.mp3', obj: jumpSound, type: 'audio' },
-            { url: 'collision.mp3', obj: collisionSound, type: 'audio' }
-        ];
-        for (let asset of assets) {
-            try {
-                const response = await fetch(asset.url);
-                if (response.ok) {
-                    const blob = await response.blob();
-                    asset.obj.src = URL.createObjectURL(blob);
-                } else {
-                    asset.obj.src = asset.url;
-                }
-            } catch(e) {
-                asset.obj.src = asset.url;
-            }
+    const muteBtn = document.getElementById("muteToggle");
+    const iconUnmuted = muteBtn.querySelector(".icon-unmuted");
+    const iconMuted = muteBtn.querySelector(".icon-muted");
+
+    muteBtn.addEventListener("click", (e) => {
+        e.stopPropagation(); 
+        isMuted = !isMuted;
+        
+        muteBtn.classList.remove("animating");
+        void muteBtn.offsetWidth; 
+        muteBtn.classList.add("animating");
+
+        if (isMuted) {
+            masterGain.gain.value = 0; 
+            iconUnmuted.style.display = "none";
+            iconMuted.style.display = "block";
+        } else {
+            masterGain.gain.value = 0.50; 
+            iconUnmuted.style.display = "block";
+            iconMuted.style.display = "none";
         }
+    });
+
+    async function preloadAssetsReal() {
+        const fetchOpts = { cache: 'no-store' }; 
+        try {
+            const imgRes = await fetch('cynos.svg', fetchOpts);
+            if (imgRes.ok) {
+                const imgBlob = await imgRes.blob();
+                characterImg.src = URL.createObjectURL(imgBlob);
+            } else { characterImg.src = 'cynos.svg'; }
+        } catch(e) { characterImg.src = 'cynos.svg'; }
+
+        try {
+            const jumpRes = await fetch('clicking.mp3', fetchOpts);
+            const jumpArray = await jumpRes.arrayBuffer();
+            jumpBuffer = await audioCtx.decodeAudioData(jumpArray);
+        } catch(e) {}
+
+        try {
+            const collRes = await fetch('collision.mp3', fetchOpts);
+            const collArray = await collRes.arrayBuffer();
+            collisionBuffer = await audioCtx.decodeAudioData(collArray);
+        } catch(e) {}
     }
 
-    const sleep = ms => new Promise(r => setTimeout(r, ms));
     const animateProgress = (start, end, duration) => new Promise(resolve => {
         const startTime = Date.now();
         const step = () => {
@@ -162,28 +308,23 @@
         requestAnimationFrame(step);
     });
 
-    // The Final Trolling Load Animation
-    async function doDramaticLoad() {
+    async function doSmoothLoad() {
         const assetPromise = preloadAssetsReal();
-        
-        await animateProgress(0, 0.99, 1000);   // Rushes to 99%
-        await sleep(300);                       // Pauses to tease
-        await animateProgress(0.99, 0.25, 1800); // Slowly drains back to 25%
-        await sleep(200);                       // Brief confused pause
-        await animateProgress(0.25, 1.00, 150); // Suddenly snaps to 100%
-        
+        await animateProgress(0, 1.00, 1000); 
         await assetPromise; 
         appState = 'ready';
-        toggleContainer.style.display = 'flex';
+        toggleContainer.style.display = 'flex'; 
     }
 
     class FloatingText {
-        constructor(x, y, text, align = "center") {
+        constructor(x, y, text, align = "center", speedY = -1.5, decay = 0.015) {
             this.x = x; this.y = y; this.text = text;
-            this.opacity = 1; this.speedY = -1.5;
+            this.opacity = 1; 
+            this.speedY = speedY;
+            this.decay = decay;
             this.align = align; 
         }
-        update() { this.y += this.speedY; this.opacity -= 0.015; }
+        update() { this.y += this.speedY; this.opacity -= this.decay; }
         draw(color) {
             ctx.save();
             ctx.globalAlpha = Math.max(0, this.opacity);
@@ -287,18 +428,6 @@
             this.dy += gravity; this.y += this.dy;
             if (this.y > groundY) { 
                 this.y = groundY; this.dy = 0; this.grounded = true; 
-                
-                if (this.jumpCount === 2) {
-                    consecutiveDoubleJumps++;
-                    if (consecutiveDoubleJumps >= 3) {
-                        let kText = "Kangaroo" + "o".repeat(kangarooOs);
-                        floatingTexts.push(new FloatingText(this.x + 90, this.y - 120, kText, "left"));
-                        kangarooOs++;
-                        consecutiveDoubleJumps = 0;
-                    }
-                } else if (this.jumpCount === 1) { 
-                    consecutiveDoubleJumps = 0; 
-                }
                 this.jumpCount = 0; 
             }
             if (this.grounded && appState === 'playing') {
@@ -310,9 +439,22 @@
         jump() {
             if (appState !== 'playing') return;
             if (this.grounded || this.jumpCount < 2) {
-                jumpSound.currentTime = 0;
-                jumpSound.play().catch(e => {});
+                stopJumpSound(); 
+                activeJumpSource = playSound(jumpBuffer); 
                 this.dy = this.jumpForce; this.grounded = false; this.jumpCount++;
+
+                let nextObs = obstacles.find(obs => obs.x + obs.width > this.x);
+                if (nextObs && !nextObs.passed && wordCooldown === 0) {
+                    let distToObs = nextObs.x - (this.x + this.width - 29);
+                    if (distToObs > -15 && distToObs < 60) {
+                        if (floatingTexts.length === 0) { 
+                            floatingTexts.push(new FloatingText(this.x + 50, this.y - 100, teaseBag.get(), "center"));
+                            lastWordType = 'tease';
+                            obstaclesPassedSinceWord = 0;
+                            wordCooldown = Math.floor(Math.random() * 3) + 3; 
+                        }
+                    }
+                }
             }
         }
         draw(color) {
@@ -375,7 +517,7 @@
                 obstacles.push(new Cactus(WIDTH + 34, secondH));
             }
             
-            nextSpawnDistance = 450 + (Math.random() * 400) + (gameSpeed * 5);
+            nextSpawnDistance = 400 + (Math.random() * 250) + (gameSpeed * 5);
             if (spawnDouble) nextSpawnDistance += 34; 
         }
     }
@@ -394,14 +536,25 @@
     function triggerGameOver() {
         appState = 'gameover'; 
         deathTime = Date.now(); shakeTime = 12; impactX = dino.x + (dino.width / 2);
+        
+        stopJumpSound(); 
+        playSound(collisionBuffer);
+        
         if (navigator.vibrate) navigator.vibrate([100, 50, 200]);
-        jumpSound.pause(); jumpSound.currentTime = 0; collisionSound.play().catch(e => {});
         particles = [];
         
         createExplosion(impactX, dino.y - (dino.height / 2), 1000);
         
         let currentS = Math.floor(score/5);
         if (currentS > highScore) { highScore = currentS; localStorage.setItem("cyroHighScore", highScore); }
+
+        currentDeathQuote = quoteBag.get();
+        
+        if (obstaclesPassedSinceWord <= 2 && lastWordType !== 'none') {
+            floatingTexts = []; 
+            let jinxWord = (lastWordType === 'quirky') ? mockBag.get() : toldYouSoBag.get();
+            floatingTexts.push(new FloatingText(impactX, dino.y - 100, jinxWord, "center", -0.8, 0.007));
+        }
     }
 
     function triggerEpicFail(currentS) {
@@ -409,8 +562,10 @@
         deathTime = Date.now(); shakeTime = 15; impactX = dino.x + (dino.width / 2);
         toggleContainer.style.display = 'none'; 
         
+        stopJumpSound(); 
+        playSound(collisionBuffer);
+        
         if (navigator.vibrate) navigator.vibrate([200, 100, 500]);
-        jumpSound.pause(); jumpSound.currentTime = 0; collisionSound.play().catch(e => {});
 
         createExplosion(impactX, dino.y - (dino.height / 2), 800); 
         obstacles.forEach(obs => createExplosion(obs.x + (obs.width / 2), obs.y - (obs.height / 2), 300));
@@ -429,10 +584,15 @@
     }
 
     function resetGame() {
-        gameSpeed = 5; score = 0; obstacles = []; particles = []; dino = new Dino();
+        gameSpeed = 5.5; 
+        score = 0; obstacles = []; particles = []; dino = new Dino();
         floatingTexts = []; deathPieces = []; shakeTime = 0; fireParticles = []; impactX = 0;
         spawnTimer = 0; appState = 'playing'; isBlinking = false;
-        nextSpawnDistance = 600; blinkTimer = 0; consecutiveDoubleJumps = 0; kangarooOs = 0;
+        nextSpawnDistance = 600; blinkTimer = 0;
+        
+        lastWordType = 'none';
+        obstaclesPassedSinceWord = 0;
+        wordCooldown = 0; 
         
         toggleContainer.style.display = 'flex'; 
         toggleContainer.style.transform = "translate(0, 0)";
@@ -481,10 +641,25 @@
                 dino.update(); spawnObstacle();
                 obstacles.forEach(obs => {
                     obs.update();
+                    
                     if (!obs.passed && obs.x + obs.width < dino.x) {
                         obs.passed = true;
-                        if (obs.towerHeight === 3 && (obs.y - obs.height) - dino.y < 40) {
-                            floatingTexts.push(new FloatingText(dino.x + 50, dino.y - 120, "PERFECT!"));
+                        obstaclesPassedSinceWord++;
+                        
+                        if (wordCooldown > 0) wordCooldown--;
+
+                        let clearance = (obs.y - obs.height) - dino.y;
+                        let isClean3Tower = (obs.towerHeight === 3 && clearance >= 0 && clearance < 40);
+                        let isNearMiss = (clearance >= 0 && clearance < 25); 
+
+                        if ((isClean3Tower || isNearMiss) && wordCooldown === 0) {
+                            if (floatingTexts.length === 0) {
+                                let randomYOffset = Math.random() * 20;
+                                floatingTexts.push(new FloatingText(dino.x + 50, dino.y - 100 - randomYOffset, quirkyBag.get(), "center"));
+                                lastWordType = 'quirky';
+                                obstaclesPassedSinceWord = 0;
+                                wordCooldown = Math.floor(Math.random() * 3) + 3; 
+                            }
                         }
                     }
                 });
@@ -501,12 +676,25 @@
                 }
                 
                 obstacles = obstacles.filter(obs => obs.x + obs.width > 0);
+                
+                for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                    floatingTexts[i].update();
+                    if (floatingTexts[i].opacity <= 0) floatingTexts.splice(i, 1);
+                }
+                
                 particles.forEach((p, i) => { p.update(); if (p.opacity <= 0) particles.splice(i, 1); });
-                score++; if (score % 800 === 0) gameSpeed += 0.3;
+                score++; 
+                if (score % 600 === 0) gameSpeed += 0.4; 
             }
 
             deathPieces.forEach(p => p.update(obstacles));
-            floatingTexts.forEach((t, i) => { t.update(); if (t.opacity <= 0) floatingTexts.splice(i, 1); });
+            
+            if (appState !== 'playing') {
+                for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                    floatingTexts[i].update();
+                    if (floatingTexts[i].opacity <= 0) floatingTexts.splice(i, 1);
+                }
+            }
             
             if (appState === 'gameover' || appState === 'epicfail') {
                 deathPieces.forEach(p => {
@@ -568,10 +756,16 @@
                 }
                 
                 if (appState === 'gameover') {
-                    ctx.fillStyle = currentMainColor; ctx.font = "bold 30px monospace";
-                    ctx.fillText("GAME OVER", WIDTH / 2, groundY - 150);
-                    ctx.font = "20px monospace";
-                    ctx.fillText("TAP TO RESTART", WIDTH / 2, groundY - 110);
+                    ctx.fillStyle = currentMainColor; 
+                    ctx.font = "bold 30px monospace";
+                    ctx.fillText("GAME OVER", WIDTH / 2, groundY - 160);
+                    
+                    if (Math.floor(Date.now() / 500) % 2 !== 0) {
+                        ctx.font = "16px monospace";
+                        ctx.fillText(currentDeathQuote, WIDTH / 2, groundY - 110);
+                        ctx.font = "20px monospace";
+                        ctx.fillText("TAP TO RESTART", WIDTH / 2, groundY - 70);
+                    }
                 }
             } else {
                 ctx.fillStyle = currentMainColor; ctx.textAlign = "center";
@@ -581,8 +775,10 @@
                 ctx.fillText("Pleaseeee", WIDTH / 2, groundY - 140);
                 
                 if (Date.now() - deathTime > 1500) {
-                    ctx.font = "16px monospace";
-                    ctx.fillText("TAP TO RESTART", WIDTH / 2, groundY - 80);
+                    if (Math.floor(Date.now() / 500) % 2 !== 0) {
+                        ctx.font = "16px monospace";
+                        ctx.fillText("TAP TO RESTART", WIDTH / 2, groundY - 80);
+                    }
                 }
             }
         }
@@ -591,17 +787,36 @@
     }
 
     function handleInput(e) {
-        if (e && (e.target.id === "themeToggle" || e.target.closest("#themeToggle"))) return;
+        if (e && (e.target.id === "themeToggle" || e.target.closest(".theme-control"))) return;
+
+        if (e && e.type === "touchstart") {
+            let clientX = e.touches[0].clientX;
+            let edgeZone = Math.min(50, window.innerWidth * 0.1); 
+            if (clientX < edgeZone || clientX > window.innerWidth - edgeZone) {
+                return; 
+            }
+        }
+
         if (e && e.type === "touchstart") e.preventDefault();
+
+        if (audioCtx.state === 'suspended') audioCtx.resume();
 
         if (appState === 'loading') return; 
 
-        if (appState === 'ready' || ((appState === 'gameover' || appState === 'epicfail') && Date.now() - deathTime > 500)) {
-            jumpSound.currentTime = 0;
-            jumpSound.play().catch(err => {});
+        if (appState === 'ready') {
+            stopJumpSound();
+            activeJumpSource = playSound(jumpBuffer);
             resetGame();
             return;
         }
+        
+        if ((appState === 'gameover' || appState === 'epicfail') && Date.now() - deathTime > 800) {
+            stopJumpSound();
+            activeJumpSource = playSound(jumpBuffer);
+            resetGame();
+            return;
+        }
+
         if (appState === 'playing') {
             dino.jump();
         }
@@ -613,11 +828,21 @@
     
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js').catch(err => {});
+        navigator.serviceWorker.register('./sw.js').then(registration => {
+            registration.update();
+            registration.addEventListener('updatefound', () => {
+                const newWorker = registration.installing;
+                newWorker.addEventListener('statechange', () => {
+                    if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                        window.location.reload();
+                    }
+                });
+            });
+        }).catch(err => {});
       });
     }
 
-    doDramaticLoad();
+    doSmoothLoad();
     update();
 </script>
 
