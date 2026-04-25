@@ -163,13 +163,17 @@
         }
     }
 
+    let lastTime = 0;
+    const TARGET_FPS = 60;
+    const TIME_STEP = 1000 / TARGET_FPS; // 16.67ms per frame at 60fps
+
     let appState = 'loading'; 
     let loadingProgress = 0;
 
     let gameSpeed = 5.5; 
     let gravity = 0.8;
     let score = 0;
-    let highScore = localStorage.getItem("cyroHighScore") || 0;
+    let highScore = parseInt(localStorage.getItem("cyroHighScore") || "0", 10);
     
     let spawnTimer = 0;
     let darkMode = false;
@@ -324,7 +328,7 @@
             this.decay = decay;
             this.align = align; 
         }
-        update() { this.y += this.speedY; this.opacity -= this.decay; }
+        update(delta) { this.y += this.speedY * delta; this.opacity -= this.decay * delta; }
         draw(color) {
             ctx.save();
             ctx.globalAlpha = Math.max(0, this.opacity);
@@ -346,10 +350,10 @@
             this.opacity = scale;
             this.color = this.isSmoke ? (darkMode ? "rgba(150,150,150,0.8)" : "rgba(80,80,80,0.8)") : (Math.random() > 0.6 ? "#FF4500" : "#FFD700");
         }
-        update() {
-            this.x += this.speedX; this.y += this.speedY;
-            this.opacity -= this.isSmoke ? 0.012 : 0.03;
-            this.size *= this.isSmoke ? 1.01 : 0.96;
+        update(delta) {
+            this.x += this.speedX * delta; this.y += this.speedY * delta;
+            this.opacity -= (this.isSmoke ? 0.012 : 0.03) * delta;
+            this.size *= this.isSmoke ? Math.pow(1.01, delta) : Math.pow(0.96, delta);
         }
         draw() {
             if (this.opacity <= 0) return;
@@ -370,10 +374,10 @@
             this.gravity = 0.7; this.bounce = -0.4; this.friction = 0.8;
             this.opacity = 1; this.isDead = false;
         }
-        update(obsList) {
+        update(delta, obsList) {
             if (!this.isDead) {
-                this.x += this.speedX; this.y += this.speedY;
-                this.speedY += this.gravity;
+                this.x += this.speedX * delta; this.y += this.speedY * delta;
+                this.speedY += this.gravity * delta;
                 if (this.y + this.size > groundY) {
                     this.y = groundY - this.size;
                     this.speedY *= this.bounce;
@@ -388,7 +392,7 @@
                 });
                 if (Math.abs(this.speedY) < 0.1 && Math.abs(this.speedX) < 0.1) this.isDead = true;
             }
-            this.opacity -= 0.003;
+            this.opacity -= 0.003 * delta;
         }
         draw(color) {
             ctx.save();
@@ -407,7 +411,7 @@
             this.speedY = (Math.random() - 0.5) * 1.5;
             this.opacity = 1;
         }
-        update() { this.x += this.speedX; this.y += this.speedY; this.opacity -= 0.04; }
+        update(delta) { this.x += this.speedX * delta; this.y += this.speedY * delta; this.opacity -= 0.04 * delta; }
         draw(color) {
             ctx.save();
             ctx.globalAlpha = Math.max(0, this.opacity);
@@ -424,16 +428,16 @@
             this.grounded = true;
             this.jumpCount = 0; this.legFrame = 0; this.legTimer = 0;
         }
-        update() {
-            this.dy += gravity; this.y += this.dy;
+        update(delta) {
+            this.dy += gravity * delta; this.y += this.dy * delta;
             if (this.y > groundY) { 
                 this.y = groundY; this.dy = 0; this.grounded = true; 
                 this.jumpCount = 0; 
             }
             if (this.grounded && appState === 'playing') {
-                this.legTimer++;
+                this.legTimer += delta;
                 if (this.legTimer > 7) { this.legFrame = this.legFrame === 0 ? 1 : 0; this.legTimer = 0; }
-                if (Math.random() < (Math.floor(score/5) > 100 ? 0.1 : 0.02)) { particles.push(new PixelDust(this.x + 10, this.y - 15)); }
+                if (Math.random() < (Math.floor(score/5) > 100 ? 0.1 : 0.02) * delta) { particles.push(new PixelDust(this.x + 10, this.y - 15)); }
             }
         }
         jump() {
@@ -482,7 +486,7 @@
             this.x = spawnX; this.y = groundY; this.passed = false;
             this.pixels = [[1,1],[2,1],[3,1],[4,1],[5,1],[6,1],[7,1],[14,1],[15,1],[16,1],[17,1],[18,1],[19,1],[20,1],[1,2],[2,2],[3,2],[4,2],[5,2],[6,2],[7,2],[14,2],[15,2],[16,2],[17,2],[18,2],[19,2],[20,2],[1,3],[2,3],[3,3],[4,3],[17,3],[18,3],[19,3],[20,3],[1,4],[2,4],[3,4],[4,4],[5,4],[16,4],[17,4],[18,4],[19,4],[20,4],[1,5],[2,5],[4,5],[5,5],[6,5],[15,5],[16,5],[17,5],[19,5],[20,5],[1,6],[2,6],[5,6],[6,6],[7,6],[14,6],[15,6],[16,6],[19,6],[20,6],[1,7],[2,7],[6,7],[7,7],[8,7],[13,7],[14,7],[15,7],[19,7],[20,7],[7,8],[8,8],[9,8],[10,8],[11,8],[12,8],[13,8],[14,8],[8,9],[10,9],[11,9],[13,9],[8,10],[9,10],[12,10],[13,10],[8,11],[9,11],[12,11],[13,11],[8,12],[10,12],[11,12],[13,12],[7,13],[8,13],[9,13],[10,13],[11,13],[12,13],[13,13],[14,13],[1,14],[2,14],[6,14],[7,14],[8,14],[13,14],[14,14],[15,14],[19,14],[20,14],[1,15],[2,15],[5,15],[6,15],[7,15],[14,15],[15,15],[16,15],[19,15],[20,15],[1,16],[2,16],[4,16],[5,16],[6,16],[15,16],[16,16],[17,16],[19,16],[20,16],[1,17],[2,17],[3,17],[4,17],[5,17],[16,17],[17,17],[18,17],[19,17],[20,17],[1,18],[2,18],[3,18],[4,18],[17,18],[18,18],[19,18],[20,18],[1,19],[2,19],[3,19],[4,19],[5,19],[6,19],[7,19],[14,19],[15,19],[16,19],[17,19],[18,19],[19,19],[20,19],[1,20],[2,20],[3,20],[4,20],[5,20],[6,20],[7,20],[14,20],[15,20],[16,20],[17,20],[18,20],[19,20],[20,20]];
         }
-        update() { this.x -= gameSpeed; }
+        update(delta) { this.x -= gameSpeed * delta; }
         draw(color) {
             ctx.fillStyle = color;
             for (let i = 0; i < this.towerHeight; i++) {
@@ -496,9 +500,10 @@
 
     let dino = new Dino(); let obstacles = [];
 
-    function spawnObstacle() {
+    function spawnObstacle(delta) {
         if (appState !== 'playing') return;
-        if (spawnTimer < 75) { spawnTimer++; return; }
+        spawnTimer += delta;
+        if (spawnTimer < 75) return;
         
         let lastObs = obstacles[obstacles.length - 1];
         if (!lastObs || (WIDTH - lastObs.x >= nextSpawnDistance)) {
@@ -584,6 +589,7 @@
     }
 
     function resetGame() {
+        lastTime = 0; // reset so delta doesn't spike on first frame after restart
         gameSpeed = 5.5; 
         score = 0; obstacles = []; particles = []; dino = new Dino();
         floatingTexts = []; deathPieces = []; shakeTime = 0; fireParticles = []; impactX = 0;
@@ -598,7 +604,10 @@
         toggleContainer.style.transform = "translate(0, 0)";
     }
 
-    function update() {
+    function update(timestamp) {
+        const elapsed = lastTime ? timestamp - lastTime : TIME_STEP;
+        const delta = Math.min(elapsed / TIME_STEP, 3); // cap at 3× to handle tab switching/stutters
+        lastTime = timestamp;
         const currentMainColor = darkMode ? "white" : "black";
         const currentBgColor = darkMode ? "black" : "white";
         ctx.save();
@@ -608,8 +617,8 @@
             const shakeY = (Math.random() - 0.5) * 15;
             ctx.translate(shakeX, shakeY);
             if (appState !== 'epicfail') toggleContainer.style.transform = `translate(${shakeX}px, ${shakeY}px)`;
-            shakeTime--;
-            if (shakeTime === 0 && appState !== 'epicfail') toggleContainer.style.transform = "translate(0, 0)";
+            shakeTime -= delta;
+            if (shakeTime <= 0 && appState !== 'epicfail') toggleContainer.style.transform = "translate(0, 0)";
         }
 
         ctx.fillStyle = currentBgColor;
@@ -638,9 +647,9 @@
             let currentS = Math.floor(score / 5);
 
             if (appState === 'playing') {
-                dino.update(); spawnObstacle();
+                dino.update(delta); spawnObstacle(delta);
                 obstacles.forEach(obs => {
-                    obs.update();
+                    obs.update(delta);
                     
                     if (!obs.passed && obs.x + obs.width < dino.x) {
                         obs.passed = true;
@@ -678,20 +687,20 @@
                 obstacles = obstacles.filter(obs => obs.x + obs.width > 0);
                 
                 for (let i = floatingTexts.length - 1; i >= 0; i--) {
-                    floatingTexts[i].update();
+                    floatingTexts[i].update(delta);
                     if (floatingTexts[i].opacity <= 0) floatingTexts.splice(i, 1);
                 }
                 
-                particles.forEach((p, i) => { p.update(); if (p.opacity <= 0) particles.splice(i, 1); });
-                score++; 
-                if (score % 600 === 0) gameSpeed += 0.4; 
+                for (let i = particles.length - 1; i >= 0; i--) { particles[i].update(delta); if (particles[i].opacity <= 0) particles.splice(i, 1); }
+                score += delta; 
+                if (Math.floor(score / 600) > Math.floor((score - delta) / 600)) gameSpeed += 0.4;
             }
 
-            deathPieces.forEach(p => p.update(obstacles));
+            deathPieces.forEach(p => p.update(delta, obstacles));
             
             if (appState !== 'playing') {
                 for (let i = floatingTexts.length - 1; i >= 0; i--) {
-                    floatingTexts[i].update();
+                    floatingTexts[i].update(delta);
                     if (floatingTexts[i].opacity <= 0) floatingTexts.splice(i, 1);
                 }
             }
@@ -716,7 +725,7 @@
                 });
             }
             
-            fireParticles.forEach((p, i) => { p.update(); if (p.opacity <= 0) fireParticles.splice(i, 1); });
+            fireParticles.forEach((p, i) => { p.update(delta); if (p.opacity <= 0) fireParticles.splice(i, 1); });
             particles.forEach(p => p.draw(currentMainColor));
             dino.draw(currentMainColor);
             obstacles.forEach(obs => obs.draw(currentMainColor));
@@ -745,7 +754,7 @@
                 if (currentS > 1000) { if (Math.floor(Date.now() / 150) % 2 === 0) showText = false; }
                 else if (isBlinking) {
                     if (Math.floor(Date.now() / 500) % 2 === 0) showText = false;
-                    blinkTimer++; if (blinkTimer > 180) { isBlinking = false; blinkTimer = 0; }
+                    blinkTimer += delta; if (blinkTimer > 180) { isBlinking = false; blinkTimer = 0; }
                 }
                 if (showText) ctx.fillText(rank, WIDTH / 2, groundY + 75 + (fontSize/4));
                 
